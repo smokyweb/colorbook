@@ -3,7 +3,7 @@ import { useEffect, useState, useCallback, useRef } from 'react'
 import { useSession } from 'next-auth/react'
 import { useRouter, useParams } from 'next/navigation'
 import Navbar from '@/components/Navbar'
-import { Upload, X, CheckCircle2, AlertCircle, Loader2, Image as ImageIcon, ToggleLeft, ToggleRight, Trash2, ChevronLeft, Palette } from 'lucide-react'
+import { Upload, X, CheckCircle2, AlertCircle, Loader2, Image as ImageIcon, ToggleLeft, ToggleRight, Trash2, ChevronLeft, Palette, Download } from 'lucide-react'
 import Link from 'next/link'
 
 interface Page {
@@ -244,13 +244,22 @@ export default function ProjectPage() {
                 />
               </div>
 
-              {/* Color It button */}
+              {/* Color It + Download PDF buttons */}
               {selectedPage.status === 'DONE' && selectedPage.lineArtUrl && (
-                <Link href={`/color/${selectedPage.id}`}
-                  className="flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-bold transition hover:opacity-90"
-                  style={{ background: 'linear-gradient(135deg,#667eea,#ec4899)', color: 'white' }}>
-                  <Palette size={14} /> Color This Page!
-                </Link>
+                <>
+                  <Link href={`/color/${selectedPage.id}`}
+                    className="flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-bold transition hover:opacity-90"
+                    style={{ background: 'linear-gradient(135deg,#667eea,#ec4899)', color: 'white' }}>
+                    <Palette size={14} /> Color This Page!
+                  </Link>
+                  <a
+                    href={`/api/pages/${selectedPage.id}/pdf`}
+                    download
+                    className="flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-semibold transition hover:opacity-90"
+                    style={{ background: 'rgba(212,168,67,0.12)', border: '1px solid rgba(212,168,67,0.3)', color: '#D4A843' }}>
+                    <Download size={14} /> Download PDF (Print &amp; Color)
+                  </a>
+                </>
               )}
 
               {/* Delete */}

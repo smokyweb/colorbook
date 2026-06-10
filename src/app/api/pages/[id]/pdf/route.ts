@@ -27,7 +27,6 @@ export async function GET(
     return NextResponse.json({ error: 'Line art not ready' }, { status: 400 })
   }
 
-  // Get the line art image path
   const lineArtPath = join(process.cwd(), 'public', page.lineArtUrl)
   if (!existsSync(lineArtPath)) {
     return NextResponse.json({ error: 'File not found' }, { status: 404 })
@@ -36,80 +35,97 @@ export async function GET(
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const sharp = require('sharp')
 
-  // A4 at 300 DPI = 2480 x 3508 pixels — upsample line art to this for crisp large-format printing
+  // A4 at 300 DPI = 2480 x 3508 px — upsample for crisp large-format printing
+  const meta = await sharp(lineArtPath).metadata()
+  const origW = meta.width || 1000
+  const origH = meta.height || 1000
+
   const PRINT_W = 2480
   const PRINT_H = 3508
-  const MARGIN_PX = 120 // ~10mm margin at 300dpi
+  const MARGIN = 100
+  const targetW = PRINT_W - MARGIN * 2
+  const targetH = PRINT_H - MARGIN * 2
 
-  // Get original image metadata to preserve aspect ratio
-  const meta = await sharp(lineArtPath).metadata()
-  const origW = meta.width || PRINT_W
-  const origH = meta.height || PRINT_H
-
-  // Scale up to fill the A4 print area while preserving aspect ratio
-  const targetW = PRINT_W - MARGIN_PX * 2
-  const targetH = PRINT_H - MARGIN_PX * 2 - 120 // room for caption
   const scale = Math.min(targetW / origW, targetH / origH)
   const fitW = Math.round(origW * scale)
   const fitH = Math.round(origH * scale)
 
-  // Upsample using Lanczos for best print quality, white background
-  const printBuffer = await sharp(lineArtPath)
+  // Upsample with Lanczos + white background, export as JPEG for PDF embedding
+  const imgJpeg = await sharp(lineArtPath)
     .resize(fitW, fitH, { kernel: 'lanczos3', withoutEnlargement: false })
-    .flatten({ background: { r: 255, g: 255, b: 255 } })  // white bg (removes transparency)
-    .png({ compressionLevel: 6 })
+    .flatten({ background: { r: 255, g: 255, b: 255 } })
+    .jpeg({ quality: 95 })
     .toBuffer()
 
-  // Use pdfkit to embed in print-ready PDF
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const pdfkitModule = require('pdfkit')
-  const PDFDocument = pdfkitModule.default ?? pdfkitModule
+  // Build a minimal valid PDF manually — no external deps needed
+  // A4 page in PDF points: 595 x 842
+  // Image placed centered, scaled to fit with margins
+  const PT_W = 595
+  const PT_H = 842
+  const PT_MARGIN = 20
 
-  // A4 in points (1 point = 1/72 inch; 300 DPI means 1 pixel = 72/300 points)
-  const A4_W_PT = 595.28
-  const A4_H_PT = 841.89
-  const MARGIN_PT = 28.35 // ~10mm in points
-  const usableW_PT = A4_W_PT - MARGIN_PT * 2
-  const usableH_PT = A4_H_PT - MARGIN_PT * 2 - 28
+  const imgAspect = fitW / fitH
+  let drawW = PT_W - PT_MARGIN * 2
+  let drawH = drawW / imgAspect
+  if (drawH > PT_H - PT_MARGIN * 2) {
+    drawH = PT_H - PT_MARGIN * 2
+    drawW = drawH * imgAspect
+  }
+  const x = (PT_W - drawW) / 2
+  const y = (PT_H - drawH) / 2
 
-  const doc = new PDFDocument({
-    size: 'A4',
-    margin: 0,
-    info: {
-      Title: `${page.caption || `Page ${page.order + 1}`} - ColorBook`,
-      Author: 'ColorBook',
-      Subject: 'Print & Color Page',
-    },
-  })
+  const imgLen = imgJpeg.length
 
-  const chunks: Buffer[] = []
-  doc.on('data', (chunk: Buffer) => chunks.push(chunk))
+  // PDF object offsets
+  const offsets: number[] = []
+  const parts: Buffer[] = []
+  let pos = 0
 
-  await new Promise<void>((resolve) => {
-    doc.on('end', resolve)
+  function addPart(s: string | Buffer) {
+    const buf = typeof s === 'string' ? Buffer.from(s) : s
+    parts.push(buf)
+    pos += buf.length
+  }
 
-    // White background
-    doc.rect(0, 0, A4_W_PT, A4_H_PT).fill('white')
+  // PDF header
+  addPart('%PDF-1.4\n%\xFF\xFF\xFF\xFF\n')
 
-    // Center image on page
-    const imgAspect = fitW / fitH
-    let drawW = usableW_PT
-    let drawH = drawW / imgAspect
-    if (drawH > usableH_PT) { drawH = usableH_PT; drawW = drawH * imgAspect }
-    const x = (A4_W_PT - drawW) / 2
-    const y = MARGIN_PT
+  // Obj 1: catalog
+  offsets[1] = pos
+  addPart('1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n')
 
-    doc.image(printBuffer, x, y, { width: drawW, height: drawH })
+  // Obj 2: pages
+  offsets[2] = pos
+  addPart('2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n')
 
-    // Caption
-    const caption = page.caption || `Page ${page.order + 1}`
-    doc.fontSize(8).fillColor('#999999')
-       .text(caption, MARGIN_PT, A4_H_PT - MARGIN_PT - 12, { width: usableW_PT, align: 'center' })
+  // Obj 3: page
+  offsets[3] = pos
+  addPart(`3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${PT_W} ${PT_H}] /Contents 4 0 R /Resources << /XObject << /Im1 5 0 R >> >> >>\nendobj\n`)
 
-    doc.end()
-  })
+  // Obj 4: page content stream
+  const contentStream = `q\n${drawW.toFixed(2)} 0 0 ${drawH.toFixed(2)} ${x.toFixed(2)} ${(PT_H - y - drawH).toFixed(2)} cm\n/Im1 Do\nQ\n`
+  offsets[4] = pos
+  addPart(`4 0 obj\n<< /Length ${contentStream.length} >>\nstream\n${contentStream}\nendstream\nendobj\n`)
 
-  const pdfBuffer = Buffer.concat(chunks)
+  // Obj 5: image XObject (JPEG)
+  offsets[5] = pos
+  addPart(`5 0 obj\n<< /Type /XObject /Subtype /Image /Width ${fitW} /Height ${fitH} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${imgLen} >>\nstream\n`)
+  addPart(imgJpeg)
+  addPart('\nendstream\nendobj\n')
+
+  // xref
+  const xrefPos = pos
+  addPart('xref\n')
+  addPart(`0 6\n`)
+  addPart('0000000000 65535 f \n')
+  for (let i = 1; i <= 5; i++) {
+    addPart(offsets[i].toString().padStart(10, '0') + ' 00000 n \n')
+  }
+
+  // trailer
+  addPart(`trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n${xrefPos}\n%%EOF\n`)
+
+  const pdfBuffer = Buffer.concat(parts)
   const filename = `colorbook-page-${page.order + 1}.pdf`
 
   return new NextResponse(pdfBuffer, {

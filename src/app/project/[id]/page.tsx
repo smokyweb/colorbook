@@ -158,7 +158,7 @@ export default function ProjectPage() {
                   <div className="h-28 flex items-center justify-center overflow-hidden" style={{ background: 'rgba(13,18,32,0.5)' }}>
                     {page.status === 'DONE' && page.lineArtUrl ? (
                       // eslint-disable-next-line @next/next/no-img-element
-                      <img src={page.lineArtUrl} alt="line art" className="w-full h-full object-contain" style={{ filter: 'invert(1)' }} />
+                      <img src={page.lineArtUrl} alt="line art" className="w-full h-full object-contain" />
                     ) : (
                       // eslint-disable-next-line @next/next/no-img-element
                       <img src={page.originalUrl} alt="original" className="w-full h-full object-cover opacity-40" />

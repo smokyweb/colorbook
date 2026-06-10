@@ -28,7 +28,10 @@ export async function POST(req: NextRequest) {
   const originalName = `original-${ts}.${ext}`
   const originalPath = join(uploadDir, originalName)
   const bytes = await file.arrayBuffer()
-  await writeFile(originalPath, Buffer.from(bytes))
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const sharpLib = require('sharp')
+  // Auto-rotate based on EXIF before saving, so portrait stays portrait
+  await sharpLib(Buffer.from(bytes)).rotate().toFile(originalPath)
 
   const pageCount = await prisma.page.count({ where: { projectId } })
   const page = await prisma.page.create({
@@ -166,8 +169,9 @@ async function convertWithSharp(
     const bmpPath = join(uploadDir, `tmp-${ts}.bmp`)
     const svgPath = join(uploadDir, `tmp-${ts}.svg`)
 
-    // Step 1: Preprocess with sharp — reduce noise, greyscale, threshold to clean B&W
+    // Step 1: Preprocess with sharp — auto-rotate from EXIF, greyscale, threshold
     await sharp(originalPath)
+      .rotate()                              // auto-rotate based on EXIF orientation
       .resize({ width: 1000, withoutEnlargement: true })
       .greyscale()
       .normalise()

@@ -157,20 +157,62 @@ async function convertWithSharp(
   try {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const sharp = require('sharp')
+    const { execSync } = await import('child_process')
+    const { existsSync: fsExists } = await import('fs')
+
     const lineArtName = `lineart-${ts}.png`
     const lineArtPath = join(uploadDir, lineArtName)
+    const bmpPath = join(uploadDir, `tmp-${ts}.bmp`)
+    const svgPath = join(uploadDir, `tmp-${ts}.svg`)
 
+    // Step 1: Preprocess with sharp — reduce colors, enhance edges, B&W
     await sharp(originalPath)
+      .resize({ width: 1200, withoutEnlargement: true })
       .greyscale()
       .normalise()
-      .sharpen({ sigma: 2, m1: 0, m2: 3 })
-      .linear(1.3, -30)
-      .convolve({ width: 3, height: 3, kernel: [-1, -1, -1, -1, 8, -1, -1, -1, -1] })
-      .negate()
-      .normalise()
-      .threshold(180)
-      .png()
-      .toFile(lineArtPath)
+      .median(3)                    // reduce noise
+      .sharpen({ sigma: 1.5 })       // crisp edges
+      .threshold(128)               // clean B&W
+      .toFormat('bmp')
+      .toFile(bmpPath)
+
+    // Step 2: Potrace - bitmap → smooth SVG vector curves
+    const potraceAvail = (() => { try { execSync('which potrace'); return true; } catch { return false; } })()
+
+    if (potraceAvail) {
+      execSync(`potrace "${bmpPath}" -s -o "${svgPath}" --blacklevel 0.5 --alphamax 1.0 --opttolerance 0.2`, { stdio: 'pipe' })
+
+      // Step 3: Convert SVG to PNG via rsvg-convert or ImageMagick, fallback to sharp BMP
+      try {
+        execSync(`rsvg-convert -o "${lineArtPath}" "${svgPath}"`, { stdio: 'pipe' })
+      } catch {
+        try {
+          execSync(`convert "${svgPath}" "${lineArtPath}"`, { stdio: 'pipe' })
+        } catch {
+          // Final fallback: sharp on the BMP (inverted = white bg black lines)
+          await sharp(bmpPath).negate().png().toFile(lineArtPath)
+        }
+      }
+
+      // Cleanup temp files
+      try { require('fs').unlinkSync(bmpPath); require('fs').unlinkSync(svgPath); } catch {}
+    } else {
+      // No potrace — use sharp with better settings for coloring-book look
+      await sharp(originalPath)
+        .resize({ width: 1200, withoutEnlargement: true })
+        .greyscale()
+        .normalise()
+        .median(3)
+        .sharpen({ sigma: 2 })
+        .convolve({ width: 3, height: 3, kernel: [-1, -1, -1, -1, 8, -1, -1, -1, -1] })
+        .negate()
+        .normalise()
+        .threshold(200)
+        .png()
+        .toFile(lineArtPath)
+    }
+
+    if (!fsExists(lineArtPath)) throw new Error('Line art file not created')
 
     await prisma.page.update({
       where: { id: pageId },
@@ -180,7 +222,7 @@ async function convertWithSharp(
       }
     })
   } catch (err) {
-    console.error('Sharp conversion failed:', err)
+    console.error('Sharp/Potrace conversion failed:', err)
     await prisma.page.update({
       where: { id: pageId },
       data: { status: 'FAILED' }

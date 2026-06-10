@@ -162,19 +162,23 @@ async function convertWithSharp(
 
     const lineArtName = `lineart-${ts}.png`
     const lineArtPath = join(uploadDir, lineArtName)
+    const tmpPng = join(uploadDir, `tmp-${ts}.png`)
     const bmpPath = join(uploadDir, `tmp-${ts}.bmp`)
     const svgPath = join(uploadDir, `tmp-${ts}.svg`)
 
-    // Step 1: Preprocess with sharp — reduce colors, enhance edges, B&W
+    // Step 1: Preprocess with sharp — reduce noise, greyscale, threshold to clean B&W
     await sharp(originalPath)
-      .resize({ width: 1200, withoutEnlargement: true })
+      .resize({ width: 1000, withoutEnlargement: true })
       .greyscale()
       .normalise()
-      .median(3)                    // reduce noise
-      .sharpen({ sigma: 1.5 })       // crisp edges
-      .threshold(128)               // clean B&W
-      .toFormat('bmp')
-      .toFile(bmpPath)
+      .median(2)
+      .sharpen({ sigma: 1.5 })
+      .threshold(140)
+      .png()
+      .toFile(tmpPng)
+
+    // Step 1b: PNG → BMP via ImageMagick (potrace requires BMP)
+    execSync(`convert "${tmpPng}" "${bmpPath}"`, { stdio: 'pipe' })
 
     // Step 2: Potrace - bitmap → smooth SVG vector curves
     const potraceAvail = (() => { try { execSync('which potrace'); return true; } catch { return false; } })()
@@ -195,7 +199,7 @@ async function convertWithSharp(
       }
 
       // Cleanup temp files
-      try { require('fs').unlinkSync(bmpPath); require('fs').unlinkSync(svgPath); } catch {}
+      try { require('fs').unlinkSync(tmpPng); require('fs').unlinkSync(bmpPath); require('fs').unlinkSync(svgPath); } catch {}
     } else {
       // No potrace — use sharp with better settings for coloring-book look
       await sharp(originalPath)

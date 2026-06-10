@@ -7,6 +7,16 @@ import { join } from 'path'
 
 export const dynamic = 'force-dynamic'
 
+export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
+  const session = await getServerSession(authOptions)
+  if (!session?.user?.id) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  const page = await prisma.page.findFirst({
+    where: { id: params.id, project: { userId: session.user.id } },
+  })
+  if (!page) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+  return NextResponse.json({ page })
+}
+
 export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
   const session = await getServerSession(authOptions)
   if (!session?.user?.id) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })

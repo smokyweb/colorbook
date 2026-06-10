@@ -3,7 +3,7 @@ import { useEffect, useState, useCallback, useRef } from 'react'
 import { useSession } from 'next-auth/react'
 import { useRouter, useParams } from 'next/navigation'
 import Navbar from '@/components/Navbar'
-import { Upload, X, RefreshCw, CheckCircle2, AlertCircle, Loader2, Image as ImageIcon, ToggleLeft, ToggleRight, Trash2, ChevronLeft } from 'lucide-react'
+import { Upload, X, CheckCircle2, AlertCircle, Loader2, Image as ImageIcon, ToggleLeft, ToggleRight, Trash2, ChevronLeft, Palette } from 'lucide-react'
 import Link from 'next/link'
 
 interface Page {
@@ -243,6 +243,15 @@ export default function ProjectPage() {
                   style={{ background: 'rgba(13,18,32,0.8)', border: '1px solid rgba(212,168,67,0.15)', color: '#F0E8D8' }}
                 />
               </div>
+
+              {/* Color It button */}
+              {selectedPage.status === 'DONE' && selectedPage.lineArtUrl && (
+                <Link href={`/color/${selectedPage.id}`}
+                  className="flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-bold transition hover:opacity-90"
+                  style={{ background: 'linear-gradient(135deg,#667eea,#ec4899)', color: 'white' }}>
+                  <Palette size={14} /> Color This Page!
+                </Link>
+              )}
 
               {/* Delete */}
               <button onClick={() => deletePage(selectedPage)}

@@ -3,7 +3,7 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { join } from 'path'
-import { readFileSync, existsSync } from 'fs'
+import { existsSync } from 'fs'
 
 export async function GET(
   req: NextRequest,
@@ -33,58 +33,78 @@ export async function GET(
     return NextResponse.json({ error: 'File not found' }, { status: 404 })
   }
 
-  const imageBuffer = readFileSync(lineArtPath)
-  const ext = lineArtPath.split('.').pop()?.toLowerCase() || 'png'
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const sharp = require('sharp')
 
-  // Use pdfkit to embed the image in a print-ready PDF (A4 size)
+  // A4 at 300 DPI = 2480 x 3508 pixels — upsample line art to this for crisp large-format printing
+  const PRINT_W = 2480
+  const PRINT_H = 3508
+  const MARGIN_PX = 120 // ~10mm margin at 300dpi
+
+  // Get original image metadata to preserve aspect ratio
+  const meta = await sharp(lineArtPath).metadata()
+  const origW = meta.width || PRINT_W
+  const origH = meta.height || PRINT_H
+
+  // Scale up to fill the A4 print area while preserving aspect ratio
+  const targetW = PRINT_W - MARGIN_PX * 2
+  const targetH = PRINT_H - MARGIN_PX * 2 - 120 // room for caption
+  const scale = Math.min(targetW / origW, targetH / origH)
+  const fitW = Math.round(origW * scale)
+  const fitH = Math.round(origH * scale)
+
+  // Upsample using Lanczos for best print quality, white background
+  const printBuffer = await sharp(lineArtPath)
+    .resize(fitW, fitH, { kernel: 'lanczos3', withoutEnlargement: false })
+    .flatten({ background: { r: 255, g: 255, b: 255 } })  // white bg (removes transparency)
+    .png({ compressionLevel: 6 })
+    .toBuffer()
+
+  // Use pdfkit to embed in print-ready PDF
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const pdfkitModule = require('pdfkit')
   const PDFDocument = pdfkitModule.default ?? pdfkitModule
 
+  // A4 in points (1 point = 1/72 inch; 300 DPI means 1 pixel = 72/300 points)
+  const A4_W_PT = 595.28
+  const A4_H_PT = 841.89
+  const MARGIN_PT = 28.35 // ~10mm in points
+  const usableW_PT = A4_W_PT - MARGIN_PT * 2
+  const usableH_PT = A4_H_PT - MARGIN_PT * 2 - 28
+
   const doc = new PDFDocument({
     size: 'A4',
-    margin: 40,
+    margin: 0,
     info: {
       Title: `${page.caption || `Page ${page.order + 1}`} - ColorBook`,
       Author: 'ColorBook',
-      Subject: 'Coloring Book Page',
+      Subject: 'Print & Color Page',
     },
   })
 
-  // Collect PDF chunks
   const chunks: Buffer[] = []
   doc.on('data', (chunk: Buffer) => chunks.push(chunk))
 
   await new Promise<void>((resolve) => {
     doc.on('end', resolve)
 
-    const A4_WIDTH = 595.28   // points
-    const A4_HEIGHT = 841.89  // points
-    const margin = 40
-    const usableW = A4_WIDTH - margin * 2
-    const usableH = A4_HEIGHT - margin * 2 - 40 // leave room for caption
+    // White background
+    doc.rect(0, 0, A4_W_PT, A4_H_PT).fill('white')
 
-    // White background (for print)
-    doc.rect(0, 0, A4_WIDTH, A4_HEIGHT).fill('white')
+    // Center image on page
+    const imgAspect = fitW / fitH
+    let drawW = usableW_PT
+    let drawH = drawW / imgAspect
+    if (drawH > usableH_PT) { drawH = usableH_PT; drawW = drawH * imgAspect }
+    const x = (A4_W_PT - drawW) / 2
+    const y = MARGIN_PT
 
-    // Embed image — fit inside usable area preserving aspect ratio
-    const imgType = ext === 'jpg' || ext === 'jpeg' ? 'jpeg' : 'png'
-    doc.image(imageBuffer, margin, margin, {
-      width: usableW,
-      height: usableH,
-      align: 'center',
-      valign: 'center',
-      fit: [usableW, usableH],
-    })
+    doc.image(printBuffer, x, y, { width: drawW, height: drawH })
 
-    // Caption at bottom
+    // Caption
     const caption = page.caption || `Page ${page.order + 1}`
-    doc.fontSize(10)
-       .fillColor('#888888')
-       .text(caption, margin, A4_HEIGHT - margin - 20, {
-         width: usableW,
-         align: 'center',
-       })
+    doc.fontSize(8).fillColor('#999999')
+       .text(caption, MARGIN_PT, A4_H_PT - MARGIN_PT - 12, { width: usableW_PT, align: 'center' })
 
     doc.end()
   })

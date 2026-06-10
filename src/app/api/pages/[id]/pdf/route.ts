@@ -38,7 +38,8 @@ export async function GET(
 
   // Use pdfkit to embed the image in a print-ready PDF (A4 size)
   // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const PDFDocument = require('pdfkit')
+  const pdfkitModule = require('pdfkit')
+  const PDFDocument = pdfkitModule.default ?? pdfkitModule
 
   const doc = new PDFDocument({
     size: 'A4',
